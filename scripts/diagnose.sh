@@ -58,7 +58,7 @@ check_fail() {
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 log "─── CHECK 1: BlueBubbles server reachable ───"
 
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${BB_URL}/api/v1/ping?password=${BB_PASSWORD}" 2>/dev/null || echo "000")
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -H "Authorization: Bearer ${BB_PASSWORD}" "${BB_URL}/api/v1/ping" 2>/dev/null || echo "000")
 
 if [[ "$HTTP_CODE" == "200" ]]; then
   check_pass "bb_server_reachable" "HTTP 200"
@@ -74,7 +74,7 @@ log "─── CHECK 2: Webhook registered ───"
 if [[ "$HTTP_CODE" != "200" ]]; then
   check_fail "webhook_registered" "skipped - BB server unreachable"
 else
-  WEBHOOK_RESPONSE=$(curl -s --max-time 5 "${BB_URL}/api/v1/webhook?password=${BB_PASSWORD}" 2>/dev/null || echo "{}")
+  WEBHOOK_RESPONSE=$(curl -s --max-time 5 -H "Authorization: Bearer ${BB_PASSWORD}" "${BB_URL}/api/v1/webhook" 2>/dev/null || echo "{}")
   
   # Extract webhook URLs using Python (portable JSON parsing)
   WEBHOOK_URLS=$(echo "$WEBHOOK_RESPONSE" | python3 -c "
@@ -103,20 +103,12 @@ fi
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 log "─── CHECK 3: OpenClaw webhook endpoint alive ───"
 
-# Build the test URL (append password as query param if not already present)
-if [[ "$OPENCLAW_WEBHOOK_URL" == *"password="* ]]; then
-  TEST_URL="$OPENCLAW_WEBHOOK_URL"
-else
-  if [[ "$OPENCLAW_WEBHOOK_URL" == *"?"* ]]; then
-    TEST_URL="${OPENCLAW_WEBHOOK_URL}&password=${BB_PASSWORD}"
-  else
-    TEST_URL="${OPENCLAW_WEBHOOK_URL}?password=${BB_PASSWORD}"
-  fi
-fi
-
-ENDPOINT_RESPONSE=$(curl -s -X POST --max-time 5 "$TEST_URL" \
+# Test OpenClaw webhook endpoint with Authorization header
+ENDPOINT_RESPONSE=$(curl -s -X POST --max-time 5 \
+  -H "Authorization: Bearer ${BB_PASSWORD}" \
   -H "Content-Type: application/json" \
-  -d '{"type":"ping","data":{}}' 2>/dev/null || echo "")
+  -d '{"type":"ping","data":{}}' \
+  "${OPENCLAW_WEBHOOK_URL}" 2>/dev/null || echo "")
 
 if [[ "$ENDPOINT_RESPONSE" == *"ok"* ]] || [[ "$ENDPOINT_RESPONSE" == *"OK"* ]]; then
   check_pass "gateway_endpoint_alive" "responded ok"
@@ -138,10 +130,10 @@ if [[ "$HTTP_CODE" != "200" ]]; then
   check_fail "webhook_delivery" "skipped - BB server unreachable"
 else
   # Get server info which includes uptime and message stats
-  SERVER_INFO=$(curl -s --max-time 5 "${BB_URL}/api/v1/server/info?password=${BB_PASSWORD}" 2>/dev/null || echo "{}")
+  SERVER_INFO=$(curl -s --max-time 5 -H "Authorization: Bearer ${BB_PASSWORD}" "${BB_URL}/api/v1/server/info" 2>/dev/null || echo "{}")
   
   # Check if we can get logs (this endpoint may not exist in all BB versions)
-  LOGS_RESPONSE=$(curl -s --max-time 5 "${BB_URL}/api/v1/server/logs?password=${BB_PASSWORD}&count=50" 2>/dev/null || echo "{}")
+  LOGS_RESPONSE=$(curl -s --max-time 5 -H "Authorization: Bearer ${BB_PASSWORD}" "${BB_URL}/api/v1/server/logs?count=50" 2>/dev/null || echo "{}")
   
   # Look for recent webhook dispatch in logs
   RECENT_DISPATCH=$(echo "$LOGS_RESPONSE" | python3 -c "
@@ -160,7 +152,7 @@ except:
 " 2>/dev/null)
 
   # Also check if there are any recent messages (proxy for activity)
-  MSG_COUNT=$(curl -s --max-time 5 "${BB_URL}/api/v1/message/count?password=${BB_PASSWORD}" 2>/dev/null | python3 -c "
+  MSG_COUNT=$(curl -s --max-time 5 -H "Authorization: Bearer ${BB_PASSWORD}" "${BB_URL}/api/v1/message/count" 2>/dev/null | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)

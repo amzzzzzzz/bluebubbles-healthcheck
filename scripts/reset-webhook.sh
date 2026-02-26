@@ -31,7 +31,8 @@ log() {
   [[ "$QUIET" == "0" ]] && echo "[reset-webhook] $@"
 }
 
-# Build full webhook URL with password
+# Build full webhook URL with password (for BB to call OpenClaw)
+# Note: The password is included in the registered URL so BB can authenticate with OpenClaw
 if [[ "$OPENCLAW_WEBHOOK_URL" == *"password="* ]]; then
   FULL_WEBHOOK_URL="$OPENCLAW_WEBHOOK_URL"
 else
@@ -42,21 +43,26 @@ else
   fi
 fi
 
+# Mask password in logged URL
+MASKED_WEBHOOK_URL=$(echo "$FULL_WEBHOOK_URL" | sed 's/password=[^&]*/password=***/g')
+
 log "Starting webhook reset at $(date)"
 log "BB Server: $BB_URL"
-log "Target webhook: $FULL_WEBHOOK_URL"
+log "Target webhook: $MASKED_WEBHOOK_URL"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Step 1: Get existing webhooks
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WEBHOOKS=$(curl -s --max-time 10 "${BB_URL}/api/v1/webhook?password=${BB_PASSWORD}" 2>/dev/null)
+WEBHOOKS=$(curl -s --max-time 10 -H "Authorization: Bearer ${BB_PASSWORD}" "${BB_URL}/api/v1/webhook" 2>/dev/null)
 
 if [[ -z "$WEBHOOKS" ]] || [[ "$WEBHOOKS" == *"error"* ]]; then
   log "ERROR: Failed to fetch webhooks from BlueBubbles"
   exit 1
 fi
 
-log "Current webhooks: $WEBHOOKS"
+# Mask any passwords in webhook URLs before logging
+MASKED_WEBHOOKS=$(echo "$WEBHOOKS" | sed 's/password=[^"&]*/password=***/g')
+log "Current webhooks: $MASKED_WEBHOOKS"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Step 2: Delete all existing webhooks
@@ -76,7 +82,7 @@ if [[ -n "$IDS" ]]; then
   while IFS= read -r id; do
     if [[ -n "$id" ]]; then
       log "Deleting webhook id=$id"
-      curl -s -X DELETE --max-time 10 "${BB_URL}/api/v1/webhook/${id}?password=${BB_PASSWORD}" > /dev/null 2>&1
+      curl -s -X DELETE --max-time 10 -H "Authorization: Bearer ${BB_PASSWORD}" "${BB_URL}/api/v1/webhook/${id}" > /dev/null 2>&1
       ((DELETED++))
     fi
   done <<< "$IDS"
@@ -98,11 +104,15 @@ log "Registering new webhook..."
 # Escape the URL for JSON
 ESCAPED_URL=$(echo "$FULL_WEBHOOK_URL" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read().strip()))" | sed 's/^"//;s/"$//')
 
-REGISTER_RESULT=$(curl -s -X POST --max-time 10 "${BB_URL}/api/v1/webhook?password=${BB_PASSWORD}" \
+REGISTER_RESULT=$(curl -s -X POST --max-time 10 \
+  -H "Authorization: Bearer ${BB_PASSWORD}" \
   -H "Content-Type: application/json" \
-  -d "{\"url\": \"${ESCAPED_URL}\", \"events\": [\"*\"]}" 2>/dev/null)
+  -d "{\"url\": \"${ESCAPED_URL}\", \"events\": [\"*\"]}" \
+  "${BB_URL}/api/v1/webhook" 2>/dev/null)
 
-log "Register result: $REGISTER_RESULT"
+# Mask any passwords in result before logging
+MASKED_RESULT=$(echo "$REGISTER_RESULT" | sed 's/password=[^"&]*/password=***/g')
+log "Register result: $MASKED_RESULT"
 
 # Check for errors in response
 if echo "$REGISTER_RESULT" | grep -qi "error"; then
@@ -115,7 +125,7 @@ fi
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 sleep 1
 
-VERIFY=$(curl -s --max-time 10 "${BB_URL}/api/v1/webhook?password=${BB_PASSWORD}" 2>/dev/null)
+VERIFY=$(curl -s --max-time 10 -H "Authorization: Bearer ${BB_PASSWORD}" "${BB_URL}/api/v1/webhook" 2>/dev/null)
 COUNT=$(echo "$VERIFY" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('data',[])))" 2>/dev/null || echo "0")
 
 log "Webhook count after reset: $COUNT"
